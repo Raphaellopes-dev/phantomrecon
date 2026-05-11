@@ -48,12 +48,12 @@ SECURITY_HEADERS = {
 
 BANNER = f"""
 [bold green]
-  ╔══════════════════════════════════════════════════════╗
-  ║                    PHANTOMRECON                      ║
-  ║           Pentest Recon Toolkit for Windows           ║
-  ║                    v{VERSION}                        ║
-  ║       by Raphael Lopes — github.com/Raphaellopes-dev  ║
-  ╚══════════════════════════════════════════════════════╝
+  +------------------------------------------------------------+
+  |                    PHANTOMRECON                              |
+  |           Pentest Recon Toolkit for Windows                  |
+  |                    v{VERSION}                                |
+  |       by Raphael Lopes - github.com/Raphaellopes-dev         |
+  +------------------------------------------------------------+
 [/bold green]
 """
 
@@ -66,7 +66,7 @@ def cprint(text, style=""):
 
 def panel(title, content, border="green"):
     if RICH_OK:
-        cprint(Panel(content, title=title, border_style=border, box=box.ROUNDED))
+        cprint(Panel(content, title=title, border_style=border, box=box.ASCII2))
     else:
         print(f"\n--- {title} ---")
         print(content)
@@ -191,7 +191,7 @@ def scan_ports(target, profile="quick"):
 
     if open_ports:
         if RICH_OK:
-            table = Table(title=f"Portas Abertas — {len(open_ports)} encontradas", box=box.ROUNDED, border_style="green")
+            table = Table(title=f"Portas Abertas — {len(open_ports)} encontradas", box=box.ASCII2, border_style="green")
             table.add_column("Porta", style="cyan", justify="center")
             table.add_column("Servico", style="bold green")
             table.add_column("Versao", style="dim")
@@ -332,7 +332,7 @@ def enumerate_dns(target):
 
     if found:
         if RICH_OK:
-            table = Table(title="Registros DNS", box=box.ROUNDED, border_style="blue")
+            table = Table(title="Registros DNS", box=box.ASCII2, border_style="blue")
             table.add_column("Tipo", style="cyan", justify="center")
             table.add_column("Valor", style="white")
             for rtype, val in found:
