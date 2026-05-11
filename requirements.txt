@@ -1,2 +1,3 @@
-rich>=13.0.0
+# Sem dependencias obrigatorias — tkinter e http.server sao built-in
+# Opcional: cryptography (para dados detalhados de SSL)
 cryptography
