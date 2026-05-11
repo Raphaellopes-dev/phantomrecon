@@ -1,3 +1,2 @@
-# Dependencias opcionais (SSL detalhado)
-# pip install cryptography
+rich>=13.0.0
 cryptography

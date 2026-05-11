@@ -1,151 +1,270 @@
 #!/usr/bin/env python3
 """
-PhantomRecon — Pentest recon toolkit for Windows
-by Raphael Lopes
+PhantomRecon v2.0 — Professional pentest recon toolkit for Windows
+by Raphael Lopes — github.com/Raphaellopes-dev
 """
 
-import sys
-import time
-import socket
-import subprocess
-import json
-import os
+import sys, time, socket, subprocess, json, os, ipaddress, re
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
-VERSION = "1.0.0"
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.syntax import Syntax
+    from rich import box
+    from rich.text import Text
+    RICH_OK = True
+except ImportError:
+    RICH_OK = False
+
+VERSION = "2.0.0"
+OUTPUT_DIR = "reports"
+
+console = Console() if RICH_OK else None
+
+COMMON_PORTS = {
+    21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+    80: "HTTP", 110: "POP3", 135: "RPC", 139: "NetBIOS", 143: "IMAP",
+    443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S",
+    1433: "MSSQL", 1521: "Oracle", 3306: "MySQL", 3389: "RDP",
+    5432: "PostgreSQL", 5800: "VNC", 5900: "VNC", 5985: "WinRM-HTTP",
+    5986: "WinRM-HTTPS", 6379: "Redis", 8080: "HTTP-Proxy",
+    8443: "HTTPS-Alt", 27017: "MongoDB", 50070: "Hadoop"
+}
+
+SECURITY_HEADERS = {
+    "strict-transport-security": "HSTS",
+    "content-security-policy": "CSP",
+    "x-frame-options": "Clickjacking",
+    "x-xss-protection": "XSS",
+    "x-content-type-options": "MIME-sniff",
+    "referrer-policy": "Referrer",
+    "permissions-policy": "Permissions"
+}
+
 BANNER = f"""
-{'='*60}
-  PHANTOMRECON v{VERSION}
-  Toolkit de reconhecimento para Windows
-  by Raphael Lopes — github.com/Raphaellopes-dev
-{'='*60}
+[bold green]
+  ╔══════════════════════════════════════════════════════╗
+  ║                    PHANTOMRECON                      ║
+  ║           Pentest Recon Toolkit for Windows           ║
+  ║                    v{VERSION}                        ║
+  ║       by Raphael Lopes — github.com/Raphaellopes-dev  ║
+  ╚══════════════════════════════════════════════════════╝
+[/bold green]
 """
 
-def log(msg, status="info"):
+def cprint(text, style=""):
+    if RICH_OK:
+        console.print(text, style=style)
+    else:
+        clean = re.sub(r'\[/?\w+\]', '', str(text))
+        print(clean)
+
+def panel(title, content, border="green"):
+    if RICH_OK:
+        cprint(Panel(content, title=title, border_style=border, box=box.ROUNDED))
+    else:
+        print(f"\n--- {title} ---")
+        print(content)
+
+def step_msg(msg, status="info"):
     symbols = {"info": "[*]", "ok": "[+]", "warn": "[!]", "err": "[-]", "highlight": "[#]"}
     s = symbols.get(status, "[*]")
-    print(f"  {s} {msg}")
-    time.sleep(0.15)
+    styles = {"info": "cyan", "ok": "bold green", "warn": "bold yellow", "err": "bold red", "highlight": "bold blue"}
+    st = styles.get(status, "")
+    cprint(f"  {s} {msg}", st)
+    time.sleep(0.1)
 
-def separator(title=None):
-    if title:
-        print(f"\n  {'-'*50}")
-        print(f"  [>] {title}")
-        print(f"  {'-'*50}")
-    else:
-        print(f"\n  {'-'*50}\n")
+def os_from_ttl(ttl):
+    if ttl <= 64: return "Linux/Unix"
+    if ttl <= 128: return "Windows"
+    if ttl <= 255: return "Cisco/Network"
+    return "Desconhecido"
 
 def resolve_dns(target):
-    separator("RESOLUCAO DNS")
+    panel("RESOLUCAO DNS", f"Resolvendo: [bold cyan]{target}[/bold cyan]")
     try:
         result = socket.gethostbyname_ex(target)
-        log(f"Host: {result[0]}", "ok")
-        log(f"Aliases: {', '.join(result[1]) if result[1] else 'Nenhum'}", "info")
-        log(f"IPs: {', '.join(result[2])}", "highlight")
-        return result[2]
+        ips = result[2]
+        text = f"  Host: [bold]{result[0]}[/bold]\n"
+        if result[1]:
+            text += f"  Aliases: {', '.join(result[1])}\n"
+        text += f"  IPs: [bold green]{', '.join(ips)}[/bold green]"
+        panel("Resultado DNS", text)
+        return ips
     except socket.gaierror:
-        log(f"Nao foi possivel resolver {target}", "err")
+        step_msg(f"Nao foi possivel resolver {target}", "err")
         return []
 
 def ping_host(ip):
-    separator("PING / STATUS")
+    panel("PING / STATUS", f"Testando: [bold cyan]{ip}[/bold cyan]")
     try:
         result = subprocess.run(["ping", "-n", "2", ip], capture_output=True, text=True, timeout=8, creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode == 0:
-            for line in result.stdout.split("\n"):
-                if "ms" in line.lower() and "tempo" in line.lower():
-                    log(f"Host respondeu: {line.strip()}", "ok")
-                    return True
-            log(f"Host ativo (sem dados de tempo)", "ok")
+            ttl_match = re.search(r"TTL=(\d+)", result.stdout, re.IGNORECASE)
+            time_match = re.search(r"(tempo|time)[=<]\s*(\d+)ms", result.stdout, re.IGNORECASE)
+
+            info = ["[bold green]Host ativo[/bold green]"]
+            if time_match: info.append(f"Latencia: {time_match.group(2)}ms")
+            if ttl_match:
+                ttl = int(ttl_match.group(1))
+                info.append(f"TTL: {ttl} [bold yellow]({os_from_ttl(ttl)})[/bold yellow]")
+
+            panel("Resultado Ping", "\n".join(info))
             return True
         else:
-            log(f"Host nao respondeu ping", "warn")
+            step_msg("Host nao respondeu ping", "warn")
             return False
+    except subprocess.TimeoutExpired:
+        step_msg("Ping excedeu tempo limite", "warn")
+        return False
     except:
-        log(f"Erro ao executar ping", "err")
+        step_msg("Erro ao executar ping", "err")
         return False
 
-def scan_ports(target, ports=None):
-    separator("VARREDURA DE PORTAS")
-    if ports is None:
-        ports = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 1433, 1521, 3306, 3389, 5432, 5800, 5900, 5985, 5986, 6379, 8080, 8443, 9000, 9090, 10000, 11211, 27017, 50070]
+def scan_ports(target, profile="quick"):
+    if profile == "quick":
+        ports = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995,
+                 1433, 1521, 3306, 3389, 5432, 5900, 5985, 5986, 6379, 8080, 8443, 27017]
+    elif profile == "full":
+        ports = list(range(1, 1025)) + [1433, 1521, 3306, 3389, 5432, 5900, 5985, 5986,
+                                         6379, 8080, 8443, 9100, 10000, 11211, 27017, 50070]
+    else:
+        ports = COMMON_PORTS.keys()
 
-    common = {
-        21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
-        80: "HTTP", 110: "POP3", 135: "RPC", 139: "NetBIOS", 143: "IMAP",
-        443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S",
-        1433: "MSSQL", 1521: "Oracle", 3306: "MySQL", 3389: "RDP",
-        5432: "PostgreSQL", 5800: "VNC", 5900: "VNC", 5985: "WinRM-HTTP",
-        5986: "WinRM-HTTPS", 6379: "Redis", 8080: "HTTP-Proxy",
-        8443: "HTTPS-Alt", 27017: "MongoDB", 50070: "Hadoop"
-    }
+    step_msg(f"Iniciando varredura ({profile}, {len(ports)} portas)", "info")
 
     open_ports = []
-    for port in ports:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1)
-            result = s.connect_ex((target, port))
-            s.close()
-            if result == 0:
-                service = common.get(port, "Desconhecido")
-                log(f"Porta {port}/TCP aberta - {service}", "ok" if port not in [3389, 445, 5985, 5986] else "warn")
-                open_ports.append((port, service))
-        except:
-            pass
+    total = len(ports)
 
-    if not open_ports:
-        log("Nenhuma porta aberta encontrada", "warn")
+    if RICH_OK:
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as prog:
+            task = prog.add_task(f"[cyan]Escaneando {target}...[/cyan]", total=total)
+            def check(port):
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(1.5)
+                    r = s.connect_ex((target, port))
+                    s.close()
+                    if r == 0:
+                        service = COMMON_PORTS.get(port, "Desconhecido")
+                        return (port, service)
+                except:
+                    pass
+                return None
+
+            with ThreadPoolExecutor(max_workers=50) as ex:
+                futures = {ex.submit(check, p): p for p in ports}
+                for f in as_completed(futures):
+                    prog.update(task, advance=1)
+                    result = f.result()
+                    if result:
+                        open_ports.append(result)
+
+        open_ports.sort(key=lambda x: x[0])
+    else:
+        for i, port in enumerate(ports):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1.5)
+                if s.connect_ex((target, port)) == 0:
+                    service = COMMON_PORTS.get(port, "Desconhecido")
+                    open_ports.append((port, service))
+                s.close()
+            except:
+                pass
+            print(f"\r  [*] Progresso: {i+1}/{total}", end="")
+        print()
+
+    if open_ports:
+        if RICH_OK:
+            table = Table(title=f"Portas Abertas — {len(open_ports)} encontradas", box=box.ROUNDED, border_style="green")
+            table.add_column("Porta", style="cyan", justify="center")
+            table.add_column("Servico", style="bold green")
+            table.add_column("Status", justify="center")
+            for port, service in open_ports:
+                is_critical = port in [3389, 445, 5985, 5986, 1433, 3306, 6379, 27017]
+                status = "[bold red]CRITICA[/bold red]" if is_critical else "[green]Aberta[/green]"
+                table.add_row(str(port), service, status)
+            cprint(table)
+        else:
+            print("\n  Portas Abertas:")
+            for port, service in open_ports:
+                print(f"    {port}/TCP  {service}")
+    else:
+        step_msg("Nenhuma porta aberta encontrada", "warn")
+
     return open_ports
 
+def grab_banner(target, port):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(3)
+        s.connect((target, port))
+        if port in [80, 8080]:
+            s.send(f"GET / HTTP/1.1\r\nHost: {target}\r\nUser-Agent: PhantomRecon/2.0\r\nConnection: close\r\n\r\n".encode())
+        time.sleep(0.5)
+        data = s.recv(1024).decode("utf-8", errors="ignore")
+        s.close()
+        return data[:200].split("\n")[0].strip()
+    except:
+        return None
+
 def check_http(target, port=80):
-    separator("ANALISE HTTP")
+    panel("ANALISE HTTP", f"Requisitando: [bold cyan]{target}:{port}[/bold cyan]")
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5)
         s.connect((target, port))
-        s.send(f"GET / HTTP/1.1\r\nHost: {target}\r\nUser-Agent: PhantomRecon/1.0\r\nConnection: close\r\n\r\n".encode())
+        s.send(f"GET / HTTP/1.1\r\nHost: {target}\r\nUser-Agent: PhantomRecon/2.0\r\nConnection: close\r\n\r\n".encode())
         response = s.recv(4096).decode("utf-8", errors="ignore")
         s.close()
 
-        headers = response.split("\r\n")
-        log(f"Resposta HTTP recebida ({len(response)} bytes)", "ok")
+        headers_raw = response.split("\r\n\r\n")[0] if "\r\n\r\n" in response else response
+        header_lines = headers_raw.split("\r\n")
 
-        important_headers = ["server", "x-powered-by", "x-aspnet-version", "location",
-                            "set-cookie", "www-authenticate", "strict-transport-security",
-                            "content-security-policy", "x-frame-options", "x-xss-protection"]
+        info_lines = [f"Status: [bold]{header_lines[0]}[/bold]"]
+        found_headers = {}
+        for line in header_lines[1:]:
+            for key, label in SECURITY_HEADERS.items():
+                if line.lower().startswith(key):
+                    val = line.split(":", 1)[1].strip() if ":" in line else ""
+                    found_headers[key] = val
+                    info_lines.append(f"  [green]{label}[/green]: {val}")
 
-        found = []
-        for h in headers:
-            for ih in important_headers:
-                if h.lower().startswith(ih):
-                    found.append(h.strip())
-                    log(f"  {h.strip()}", "highlight" if "server" in h.lower() or "powered" in h.lower() else "info")
-
-        if not found:
-            log("Nenhum header de seguranca encontrado", "warn")
+        if not found_headers:
+            info_lines.append("  [yellow]Nenhum header de seguranca encontrado[/yellow]")
         else:
-            missing_security = [h for h in ["strict-transport-security", "content-security-policy", "x-frame-options", "x-xss-protection"] if not any(h in f.lower() for f in found)]
-            if missing_security:
-                log(f"Faltam headers de seguranca: {', '.join(missing_security)}", "warn")
+            missing = [label for key, label in SECURITY_HEADERS.items() if key not in found_headers]
+            if missing:
+                info_lines.append(f"\n  [bold red]Faltam: {', '.join(missing)}[/bold red]")
 
+        panel("Headers HTTP", "\n".join(info_lines))
         return response
+    except socket.timeout:
+        step_msg("Timeout na requisicao HTTP", "err")
     except Exception as e:
-        log(f"Erro na requisicao HTTP: {str(e)}", "err")
-        return None
+        step_msg(f"Erro HTTP: {str(e)}", "err")
+    return None
 
 def check_https(target, port=443):
-    separator("ANALISE SSL/TLS")
-    import ssl
+    panel("ANALISE SSL/TLS", f"Conectando: [bold cyan]{target}:{port}[/bold cyan]")
+    import ssl as sslmod
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(5)
     try:
-        ctx = ssl.create_default_context()
+        ctx = sslmod.create_default_context()
         ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx.verify_mode = sslmod.CERT_NONE
         ss = ctx.wrap_socket(s, server_hostname=target)
         ss.connect((target, port))
-        log(f"Conexao SSL estabelecida com {target}:{port}", "ok")
+        step_msg("Conexao SSL estabelecida", "ok")
+
+        info = {"ssl": "ativo"}
         try:
             from cryptography import x509
             from cryptography.hazmat.backends import default_backend
@@ -154,164 +273,275 @@ def check_https(target, port=443):
             subject = cert_obj.subject.rfc4514_string()
             issuer = cert_obj.issuer.rfc4514_string()
             exp = cert_obj.not_valid_after
-            if exp.tzinfo is not None:
-                exp = exp.replace(tzinfo=None)
+            if exp.tzinfo is not None: exp = exp.replace(tzinfo=None)
             exp_str = exp.strftime("%Y-%m-%d %H:%M:%S")
-            log(f"Subject: {subject}", "info")
-            log(f"Emissor: {issuer}", "info")
-            log(f"Validade: {exp_str}", "highlight" if exp > datetime.utcnow() else "err")
-            ss.close()
-            return {"subject": subject, "issuer": issuer, "expires": exp_str}
+            valid = exp > datetime.utcnow()
+            info.update({"subject": subject, "issuer": issuer, "expires": exp_str, "valid": str(valid)})
+
+            lines = [
+                f"  Subject: [bold]{subject}[/bold]",
+                f"  Emissor: {issuer}",
+                f"  Validade: [{'green' if valid else 'red'}]{exp_str}[/{'green' if valid else 'red'}]",
+                f"  Status: [{'green' if valid else 'red'}]{'VALIDO' if valid else 'EXPIRADO'}[/{'green' if valid else 'red'}]"
+            ]
+            panel("Certificado SSL", "\n".join(lines))
         except ImportError:
-            log("Cryptography opcional instalavel: pip install cryptography", "warn")
+            step_msg("Para dados detalhados: pip install cryptography", "warn")
             cert = ss.getpeercert()
             if cert:
-                log("Certificado SSL presente e valido", "ok")
-            ss.close()
-            return {"status": "ssl active"}
+                step_msg("Certificado presente e valido", "ok")
+                info["status"] = "certificate present"
+        ss.close()
+        return info
     except Exception as e:
-        log(f"Erro SSL: {str(e)}", "err")
-        try:
-            s.close()
-        except:
-            pass
+        step_msg(f"Erro SSL: {str(e)}", "err")
+        try: s.close()
+        except: pass
     return None
 
-def check_dns_zone(target):
-    separator("REGISTROS DNS")
-    try:
-        result = subprocess.run(["nslookup", target], capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
-        lines = [l.strip() for l in result.stdout.split("\n") if l.strip()]
-        for line in lines:
-            if any(kw in line.lower() for kw in ["name", "address", "canonical", "aliases", "mx", "ns"]):
-                if target.lower() in line.lower():
-                    log(f"  {line}", "info")
-        log("Consulta DNS concluida", "ok")
-    except subprocess.TimeoutExpired:
-        log("Consulta DNS excedeu tempo limite", "warn")
-    except:
-        log("Erro na consulta DNS", "err")
+def enumerate_dns(target):
+    panel("REGISTROS DNS", f"Consultando: [bold cyan]{target}[/bold cyan]")
+    found = []
+    for rtype in ["A", "MX", "NS", "TXT", "AAAA", "CNAME"]:
+        try:
+            result = subprocess.run(
+                ["nslookup", f"-type={rtype}", target],
+                capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            lines = [l.strip() for l in result.stdout.split("\n") if l.strip() and target.lower() in l.lower()]
+            for line in lines:
+                if ":" in line:
+                    val = line.split(":", 1)[1].strip()
+                    if val and val != target:
+                        found.append((rtype, val))
+        except:
+            pass
 
-def generate_report(target, ips, ports, http_data, https_data, output_dir="reports"):
-    separator("GERANDO RELATORIO")
-    os.makedirs(output_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{output_dir}/recon_{target}_{timestamp}.txt"
+    if found:
+        if RICH_OK:
+            table = Table(title="Registros DNS", box=box.ROUNDED, border_style="blue")
+            table.add_column("Tipo", style="cyan", justify="center")
+            table.add_column("Valor", style="white")
+            for rtype, val in found:
+                table.add_row(rtype, val)
+            cprint(table)
+        else:
+            for rtype, val in found:
+                print(f"  {rtype}: {val}")
+    else:
+        step_msg("Nenhum registro DNS adicional encontrado", "warn")
+
+def generate_html_report(target, ips, open_ports, http_data, https_data, filename):
+    now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    port_rows = ""
+    for port, service in open_ports:
+        critical = "class='critical'" if port in [3389, 445, 5985, 5986, 1433, 3306, 6379, 27017] else ""
+        port_rows += f"<tr><td>{port}</td><td>{service}</td><td {critical}>Aberta</td></tr>"
+
+    http_section = ""
+    if http_data:
+        safe_http = http_data[:2000].replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        http_section = f"""
+        <div class="section">
+            <div class="section-title">🌐 HTTP Headers</div>
+            <div class="section-content"><pre>{safe_http}</pre></div>
+        </div>"""
+
+    https_section = ""
+    if https_data:
+        cert_info = ""
+        if "subject" in https_data:
+            cert_info = f"""
+            <div class="info-grid">
+                <div class="info-item"><span class="label">Subject</span><span>{https_data['subject']}</span></div>
+                <div class="info-item"><span class="label">Emissor</span><span>{https_data['issuer']}</span></div>
+                <div class="info-item"><span class="label">Validade</span><span>{https_data['expires']}</span></div>
+                <div class="info-item"><span class="label">Status</span><span class="{'valid' if https_data.get('valid')=='True' else 'expired'}">{'VALIDO' if https_data.get('valid')=='True' else 'EXPIRADO'}</span></div>
+            </div>"""
+        https_section = f"""
+        <div class="section">
+            <div class="section-title">🔒 SSL/TLS</div>
+            <div class="section-content">{cert_info}</div>
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PhantomRecon — {target}</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ background: #0a0a0a; color: #c0c0c0; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; padding: 20px; }}
+.container {{ max-width: 900px; margin: 0 auto; }}
+.header {{ text-align: center; padding: 40px 0; border-bottom: 1px solid #00ff88; margin-bottom: 30px; }}
+.header h1 {{ color: #00ff88; font-size: 28px; letter-spacing: 3px; }}
+.header .sub {{ color: #666; font-size: 13px; margin-top: 5px; }}
+.header .target {{ color: #00ff88; font-size: 18px; margin-top: 10px; }}
+.header .date {{ color: #555; font-size: 12px; margin-top: 5px; }}
+.section {{ background: #111; border: 1px solid #222; border-radius: 6px; margin-bottom: 20px; overflow: hidden; }}
+.section-title {{ background: #1a1a1a; padding: 12px 18px; color: #00ff88; font-weight: bold; font-size: 14px; border-bottom: 1px solid #222; }}
+.section-content {{ padding: 15px 18px; font-size: 13px; line-height: 1.6; }}
+pre {{ background: #0d0d0d; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 11px; color: #aaa; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+th {{ text-align: left; padding: 10px 12px; background: #1a1a1a; color: #00ff88; border-bottom: 1px solid #333; }}
+td {{ padding: 8px 12px; border-bottom: 1px solid #1a1a1a; }}
+td.critical {{ color: #ff4444; font-weight: bold; }}
+.info-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
+.info-item {{ background: #0d0d0d; padding: 10px 14px; border-radius: 4px; border-left: 3px solid #00ff88; }}
+.info-item .label {{ display: block; font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }}
+.info-item span {{ font-size: 13px; }}
+.valid {{ color: #00ff88; }}
+.expired {{ color: #ff4444; }}
+.footer {{ text-align: center; padding: 30px 0; color: #444; font-size: 12px; border-top: 1px solid #1a1a1a; margin-top: 30px; }}
+.footer a {{ color: #00ff88; text-decoration: none; }}
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>PHANTOMRECON</h1>
+        <div class="sub">Pentest Recon Toolkit for Windows</div>
+        <div class="target">🎯 {target}</div>
+        <div class="date">{now}</div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">📡 Alvo</div>
+        <div class="section-content">
+            <div class="info-grid">
+                <div class="info-item"><span class="label">Host</span><span>{target}</span></div>
+                <div class="info-item"><span class="label">IPs</span><span>{', '.join(ips) if ips else 'N/A'}</span></div>
+                <div class="info-item"><span class="label">Portas Abertas</span><span>{len(open_ports)}</span></div>
+                <div class="info-item"><span class="label">Operador</span><span>Raphael Lopes</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">🔌 Portas Abertas ({len(open_ports)})</div>
+        <div class="section-content">
+            <table>
+                <tr><th>Porta</th><th>Servico</th><th>Status</th></tr>
+                {port_rows if port_rows else '<tr><td colspan="3">Nenhuma porta aberta</td></tr>'}
+            </table>
+        </div>
+    </div>
+
+    {http_section}
+    {https_section}
+
+    <div class="footer">
+        Gerado pelo PhantomRecon v{VERSION} &mdash; <a href="https://github.com/Raphaellopes-dev/phantomrecon" target="_blank">github.com/Raphaellopes-dev/phantomrecon</a>
+    </div>
+</div>
+</body>
+</html>"""
 
     with open(filename, "w", encoding="utf-8") as f:
-        f.write(f"{'='*60}\n")
-        f.write(f"  PHANTOMRECON v{VERSION} — Relatorio de Reconhecimento\n")
+        f.write(html)
+    return filename
+
+def generate_report(target, ips, ports, http_data, https_data):
+    Path(OUTPUT_DIR).mkdir(exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_target = re.sub(r'[^\w.-]', '_', target)
+
+    # TXT
+    txt_file = f"{OUTPUT_DIR}/recon_{safe_target}_{ts}.txt"
+    with open(txt_file, "w", encoding="utf-8") as f:
+        f.write("="*60 + "\n")
+        f.write(f"  PHANTOMRECON v{VERSION} - Relatorio de Reconhecimento\n")
         f.write(f"  Alvo: {target}\n")
         f.write(f"  Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
         f.write(f"  Operador: Raphael Lopes\n")
-        f.write(f"{'='*60}\n\n")
-
-        f.write(f"[+] Alvo: {target}\n")
-        if ips:
-            f.write(f"[+] IPs: {', '.join(ips)}\n")
-        f.write(f"\n")
-
+        f.write("="*60 + "\n\n")
+        f.write(f"  Alvo: {target}\n")
+        if ips: f.write(f"  IPs: {', '.join(ips)}\n")
+        f.write("\n")
         if ports:
-            f.write(f"{'-'*50}\n")
-            f.write(f"PORTAS ABERTAS\n")
-            f.write(f"{'-'*50}\n")
-            for port, service in ports:
-                f.write(f"  {port}/TCP  {service}\n")
-            f.write(f"\n")
-
-        if http_data:
-            f.write(f"{'-'*50}\n")
-            f.write(f"HEADERS HTTP\n")
-            f.write(f"{'-'*50}\n")
-            f.write(http_data[:2000] + "\n\n")
-
-        if https_data:
-            f.write(f"{'-'*50}\n")
-            f.write(f"SSL/TLS\n")
-            f.write(f"{'-'*50}\n")
-            f.write(json.dumps(https_data, indent=2) + "\n\n")
-
-        f.write(f"{'='*60}\n")
-        f.write(f"  Relatorio gerado automaticamente pelo PhantomRecon\n")
+            f.write("-"*50 + "\n")
+            f.write("  PORTAS ABERTAS\n")
+            f.write("-"*50 + "\n")
+            for p, s in ports: f.write(f"    {p}/TCP  {s}\n")
+            f.write("\n")
+        f.write("="*60 + "\n")
         f.write(f"  github.com/Raphaellopes-dev\n")
-        f.write(f"{'='*60}\n")
+        f.write("="*60 + "\n")
 
-    log(f"Relatorio salvo: {filename}", "ok")
-    return filename
+    # HTML
+    html_file = f"{OUTPUT_DIR}/recon_{safe_target}_{ts}.html"
+    generate_html_report(target, ips, ports, http_data, https_data, html_file)
 
-def interactive_mode():
-    separator()
-    target = input("  [Target] Digite o dominio ou IP: ").strip()
-    if not target:
-        log("Target invalido", "err")
-        return
+    step_msg(f"Relatorio TXT: {txt_file}", "ok")
+    step_msg(f"Relatorio HTML: {html_file}", "ok")
+    return txt_file, html_file
 
-    print()
-    log(f"Iniciando reconhecimento em: {target}", "highlight")
-    log(f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", "info")
-    separator()
+def run_recon(target, profile="quick"):
+    cprint(BANNER)
+    step_msg(f"Alvo: [bold green]{target}[/bold green] | Perfil: [bold cyan]{profile}[/bold cyan]", "highlight")
+    step_msg(f"Iniciando: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", "info")
 
     ips = resolve_dns(target)
-    main_ip = ips[0] if ips else target
+    if not ips:
+        step_msg("Nao foi possivel resolver o alvo. Tentando como IP...", "warn")
+        main_ip = target
+    else:
+        main_ip = ips[0]
 
     ping_host(main_ip)
-    open_ports = scan_ports(main_ip)
+    open_ports = scan_ports(main_ip, profile)
 
     http_data = None
     https_data = None
     for port, service in open_ports:
-        if port == 80:
-            http_data = check_http(target, 80)
-        elif port == 443:
-            https_data = check_https(target, 443)
-        elif port in [8080, 8443]:
-            if port == 8080:
-                http_data = check_http(target, 8080)
-            elif port == 8443:
-                https_data = check_https(target, 8443)
+        if port in (80, 8080): http_data = check_http(target, port)
+        if port in (443, 8443): https_data = check_https(target, port)
 
     if not http_data and not https_data:
-        log("Testando HTTP na porta 80...", "info")
+        step_msg("Testando HTTP na porta 80...", "info")
         http_data = check_http(target, 80)
 
-    check_dns_zone(target)
+    enumerate_dns(target)
 
-    report = generate_report(target, ips, open_ports, http_data, https_data)
+    txt_file, html_file = generate_report(target, ips, open_ports, http_data, https_data)
 
-    separator("RESUMO")
-    log(f"Alvo: {target}", "ok")
-    log(f"IPs encontrados: {len(ips)}", "ok")
-    log(f"Portas abertas: {len(open_ports)}", "ok")
-    log(f"Relatorio: {report}", "highlight")
-    separator()
+    panel("RESUMO", "\n".join([
+        f"  Alvo: [bold green]{target}[/bold green]",
+        f"  IPs: {len(ips)}",
+        f"  Portas abertas: [{'bold red' if len(open_ports) > 5 else 'green'}]{len(open_ports)}[/{'bold red' if len(open_ports) > 5 else 'green'}]",
+        f"  Relatorio TXT: [cyan]{txt_file}[/cyan]",
+        f"  Relatorio HTML: [cyan]{html_file}[/cyan]"
+    ]))
+
+    cprint("\n[bold green]  Reconhecimento concluido com sucesso![/bold green]")
+
+def interactive():
+    cprint(BANNER)
+    panel("PhantomRecon v" + VERSION, "[bold green]Modo Interativo[/bold green]\n\nDigite o alvo e escolha o perfil de scan.")
+    target = input("\n  [Target] Dominio ou IP: ").strip()
+    if not target:
+        step_msg("Target invalido", "err")
+        return
+    print("  [Profile] quick (padrao, 25 portas) | full (1024+ portas)")
+    profile = input("  [Profile] (quick): ").strip() or "quick"
+    if profile not in ("quick", "full"):
+        profile = "quick"
+    run_recon(target, profile)
 
 def main():
-    print(BANNER)
-
     if len(sys.argv) > 1:
         target = sys.argv[1]
-        log(f"Iniciando reconhecimento em: {target}", "highlight")
-        ips = resolve_dns(target)
-        main_ip = ips[0] if ips else target
-        ping_host(main_ip)
-        open_ports = scan_ports(main_ip)
-        http_data = None
-        https_data = None
-        for port, service in open_ports:
-            if port in [80, 8080]: http_data = check_http(target, port)
-            if port in [443, 8443]: https_data = check_https(target, port)
-        if not http_data and not https_data:
-            http_data = check_http(target, 80)
-        check_dns_zone(target)
-        generate_report(target, ips, open_ports, http_data, https_data)
-        print(f"\n  {'-'*50}")
-        log("Reconhecimento concluido!")
+        profile = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] in ("quick", "full") else "quick"
+        run_recon(target, profile)
     else:
-        interactive_mode()
+        interactive()
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n\n  [!] Operacao cancelada pelo usuario\n")
+        cprint("\n\n  [!] Operacao cancelada pelo usuario\n", "bold yellow")
         sys.exit(0)
