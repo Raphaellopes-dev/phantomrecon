@@ -5,7 +5,7 @@ by Raphael Lopes — github.com/Raphaellopes-dev
 """
 
 import sys, time, socket, subprocess, json, os, ipaddress, re
-from datetime import datetime
+from datetime import datetime, UTC
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -21,7 +21,7 @@ try:
 except ImportError:
     RICH_OK = False
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 OUTPUT_DIR = "reports"
 
 console = Console() if RICH_OK else None
@@ -140,23 +140,40 @@ def scan_ports(target, profile="quick"):
 
     open_ports = []
     total = len(ports)
+    banner_ports = {21, 22, 25, 80, 110, 143, 443, 8080, 8443}
+
+    def check(port):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.5)
+            r = s.connect_ex((target, port))
+            if r == 0:
+                service = COMMON_PORTS.get(port, "Desconhecido")
+                banner = None
+                if port in banner_ports:
+                    try:
+                        bs = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        bs.settimeout(2)
+                        bs.connect((target, port))
+                        if port in (80, 8080):
+                            bs.send(f"GET / HTTP/1.0\r\nHost: {target}\r\nUser-Agent: PR/2.0\r\n\r\n".encode())
+                        time.sleep(0.3)
+                        raw = bs.recv(256).decode("utf-8", errors="ignore").strip()[:80]
+                        if "\n" in raw: raw = raw.split("\n")[0].strip()
+                        if raw: banner = raw
+                        bs.close()
+                    except:
+                        pass
+                s.close()
+                return (port, service, banner)
+            s.close()
+        except:
+            pass
+        return None
 
     if RICH_OK:
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as prog:
             task = prog.add_task(f"[cyan]Escaneando {target}...[/cyan]", total=total)
-            def check(port):
-                try:
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(1.5)
-                    r = s.connect_ex((target, port))
-                    s.close()
-                    if r == 0:
-                        service = COMMON_PORTS.get(port, "Desconhecido")
-                        return (port, service)
-                except:
-                    pass
-                return None
-
             with ThreadPoolExecutor(max_workers=50) as ex:
                 futures = {ex.submit(check, p): p for p in ports}
                 for f in as_completed(futures):
@@ -164,19 +181,11 @@ def scan_ports(target, profile="quick"):
                     result = f.result()
                     if result:
                         open_ports.append(result)
-
         open_ports.sort(key=lambda x: x[0])
     else:
         for i, port in enumerate(ports):
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(1.5)
-                if s.connect_ex((target, port)) == 0:
-                    service = COMMON_PORTS.get(port, "Desconhecido")
-                    open_ports.append((port, service))
-                s.close()
-            except:
-                pass
+            result = check(port)
+            if result: open_ports.append(result)
             print(f"\r  [*] Progresso: {i+1}/{total}", end="")
         print()
 
@@ -185,16 +194,19 @@ def scan_ports(target, profile="quick"):
             table = Table(title=f"Portas Abertas — {len(open_ports)} encontradas", box=box.ROUNDED, border_style="green")
             table.add_column("Porta", style="cyan", justify="center")
             table.add_column("Servico", style="bold green")
+            table.add_column("Versao", style="dim")
             table.add_column("Status", justify="center")
-            for port, service in open_ports:
-                is_critical = port in [3389, 445, 5985, 5986, 1433, 3306, 6379, 27017]
-                status = "[bold red]CRITICA[/bold red]" if is_critical else "[green]Aberta[/green]"
-                table.add_row(str(port), service, status)
+            for port, service, banner in open_ports:
+                sensitive = port in [3389, 445, 5985, 5986, 1433, 3306, 6379, 27017]
+                status = "[bold yellow]Exposicao Sensivel[/bold yellow]" if sensitive else "[green]Aberta[/green]"
+                vers = banner[:50] if banner else "-"
+                table.add_row(str(port), service, vers, status)
             cprint(table)
         else:
             print("\n  Portas Abertas:")
-            for port, service in open_ports:
-                print(f"    {port}/TCP  {service}")
+            for port, service, banner in open_ports:
+                banner_txt = f" | {banner[:50]}" if banner else ""
+                print(f"    {port}/TCP  {service}{banner_txt}")
     else:
         step_msg("Nenhuma porta aberta encontrada", "warn")
 
@@ -275,7 +287,7 @@ def check_https(target, port=443):
             exp = cert_obj.not_valid_after
             if exp.tzinfo is not None: exp = exp.replace(tzinfo=None)
             exp_str = exp.strftime("%Y-%m-%d %H:%M:%S")
-            valid = exp > datetime.utcnow()
+            valid = exp.replace(tzinfo=None) > datetime.now(UTC).replace(tzinfo=None)
             info.update({"subject": subject, "issuer": issuer, "expires": exp_str, "valid": str(valid)})
 
             lines = [
@@ -336,9 +348,10 @@ def generate_html_report(target, ips, open_ports, http_data, https_data, filenam
     now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     port_rows = ""
-    for port, service in open_ports:
-        critical = "class='critical'" if port in [3389, 445, 5985, 5986, 1433, 3306, 6379, 27017] else ""
-        port_rows += f"<tr><td>{port}</td><td>{service}</td><td {critical}>Aberta</td></tr>"
+    for port, service, banner in open_ports:
+        sensitive = "class='critical'" if port in [3389, 445, 5985, 5986, 1433, 3306, 6379, 27017] else ""
+        versao = f"<br><span style='color:#888;font-size:11px'>{banner[:60]}</span>" if banner else ""
+        port_rows += f"<tr><td>{port}</td><td>{service}{versao}</td><td {sensitive}>Exposicao Sensivel</td></tr>"
 
     http_section = ""
     if http_data:
@@ -465,7 +478,10 @@ def generate_report(target, ips, ports, http_data, https_data):
             f.write("-"*50 + "\n")
             f.write("  PORTAS ABERTAS\n")
             f.write("-"*50 + "\n")
-            for p, s in ports: f.write(f"    {p}/TCP  {s}\n")
+            for p, s, banner in ports:
+                line = f"    {p}/TCP  {s}"
+                if banner: line += f"  |  {banner[:60]}"
+                f.write(line + "\n")
             f.write("\n")
         f.write("="*60 + "\n")
         f.write(f"  github.com/Raphaellopes-dev\n")
@@ -496,7 +512,7 @@ def run_recon(target, profile="quick"):
 
     http_data = None
     https_data = None
-    for port, service in open_ports:
+    for port, service, _ in open_ports:
         if port in (80, 8080): http_data = check_http(target, port)
         if port in (443, 8443): https_data = check_https(target, port)
 
