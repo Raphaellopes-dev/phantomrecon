@@ -1,4 +1,4 @@
-# PhantomRecon Free v5.0
+# PhantomRecon Free 
 
 **Offensive Security Toolkit for Windows** — Nativo, zero dependencias, sem WSL/VM/Kali.
 
