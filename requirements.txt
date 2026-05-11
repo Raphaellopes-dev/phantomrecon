@@ -1,0 +1,3 @@
+# Dependencias opcionais (SSL detalhado)
+# pip install cryptography
+cryptography
