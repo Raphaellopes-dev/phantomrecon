@@ -98,7 +98,7 @@ def module_recon(manager, target, scan_id):
                 sk = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sk.settimeout(5)
                 sk.connect((main_ip, p))
-                sk.send(f"GET / HTTP/1.1\r\nHost: {target}\r\nUser-Agent: PR/5.0\r\nConnection: close\r\n\r\n".encode())
+                sk.send(f"GET / HTTP/1.1\r\nHost: {target}\r\nUser-Agent: PR/Free\r\nConnection: close\r\n\r\n".encode())
                 resp = sk.recv(4096).decode("utf-8", errors="ignore")
                 sk.close()
                 hdr = resp.split("\r\n\r\n")[0] if "\r\n\r\n" in resp else resp
