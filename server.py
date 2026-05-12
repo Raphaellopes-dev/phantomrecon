@@ -4,7 +4,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
 
-from config import VERSION, EDITION, OUTPUT_DIR, MODE_MODULES
+from config import EDITION, OUTPUT_DIR, MODE_MODULES
 from utils.helpers import calculate_security_score, generate_avaliacao_explanation
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ def clean_target(raw):
 
 def run_full_scan(raw_target, scan_id, profile="aggressive"):
     target = clean_target(raw_target)
-    manager.add_log(scan_id, f"[ INICIANDO PHANTOMRECON v{VERSION} Free Edition ]", "module")
+    manager.add_log(scan_id, "[ INICIANDO PHANTOMRECON Free Edition ]", "module")
     manager.add_log(scan_id, f"[>] Alvo: {target}", "info")
     manager.add_log(scan_id, f"[>] Perfil: {profile.upper()}", "info")
     manager.add_log(scan_id, f"[>] Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", "info")
@@ -131,7 +131,7 @@ def run_full_scan(raw_target, scan_id, profile="aggressive"):
     manager.add_log(scan_id, "=" * 50, "separator")
 
     manager.add_log(scan_id, "[+] Gerando relatorios...", "info")
-    all_results["version"] = VERSION
+    all_results["version"] = ""
     all_results["target"] = target
     all_results["timestamp"] = datetime.now().isoformat()
 
@@ -166,8 +166,7 @@ except:
     PAGE_TEMPLATE = "<html><body><h1>PhantomRecon</h1><p>Template not found</p></body></html>"
 
 def get_page():
-    page = PAGE_TEMPLATE.replace("{VERSION}", VERSION)
-    page = page.replace("{EDITION}", EDITION)
+    page = PAGE_TEMPLATE.replace("{EDITION}", EDITION)
     return page
 
 # ---------------------------------------------------------------------------
@@ -260,7 +259,7 @@ def launch():
         server = HTTPServer(("0.0.0.0", port), PhantomHandler)
 
     url = f"http://{host}:{port}" if port != 80 else f"http://{host}/"
-    print(f"\n  PHANTOMRECON v{VERSION} Free Edition")
+    print(f"\n  PHANTOMRECON Free Edition")
     print(f"  {'='*50}")
     print(f"  Interface: {url}")
     if not has_host:

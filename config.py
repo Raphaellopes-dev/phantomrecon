@@ -1,4 +1,3 @@
-VERSION = "5.0.0"
 EDITION = "Free Edition"
 OUTPUT_DIR = "reports"
 
