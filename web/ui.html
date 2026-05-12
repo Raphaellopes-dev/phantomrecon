@@ -44,19 +44,19 @@ body{background:#000;color:#00ff88;font-family:'Consolas','Courier New',monospac
 <body>
 <canvas id="matrix"></canvas>
 <div class="container">
-<div class="header"><h1>PHANTOMRECON <span style="color:#4488ff;font-size:14px;letter-spacing:2px">Free</span></h1><div class="sub">Offensive Security Toolkit v{VERSION} — Windows Native</div></div>
+<div class="header"><h1>PHANTOMRECON <span style="color:#4488ff;font-size:11px;letter-spacing:2px;font-weight:normal">Free Edition</span></h1><div class="sub">Windows Native Security Assessment Toolkit v{VERSION}</div></div>
 <div class="top-bar">
 <input type="text" id="target" placeholder="Dominio ou IP (ex: scanme.nmap.org)" onkeydown="if(event.key==='Enter')startScan()">
 <select id="profile">
-<option value="aggressive">Agressivo (recon+web+vuln+exploit)</option>
+<option value="aggressive">Completo (recon+web+vuln+exposure)</option>
 <option value="audit">Auditoria (recon+web+vuln)</option>
-<option value="safe">Seguro (recon only)</option>
+<option value="safe">Recon (recon only)</option>
 </select>
 <button id="scanBtn" onclick="startScan()">EXECUTAR</button>
 </div>
 <div class="terminal" id="terminal"><span class="term-prompt">_</span></div>
 <div class="results" id="results"></div>
-<div class="footer">PhantomRecon Free v{VERSION} — <a href="https://github.com/Raphaellopes-dev/phantomrecon" target="_blank">github.com/Raphaellopes-dev/phantomrecon</a></div>
+<div class="footer">PhantomRecon v{VERSION} Free Edition — <a href="https://github.com/Raphaellopes-dev/phantomrecon" target="_blank">github.com/Raphaellopes-dev/phantomrecon</a></div>
 </div>
 <script>
 const canvas=document.getElementById('matrix'),ctx=canvas.getContext('2d');
@@ -79,7 +79,7 @@ async function startScan(){
     scanBtn.disabled=true;scanBtn.textContent='EXECUTANDO...';
     resultsDiv.className='results';resultsDiv.innerHTML='';clearTerm();
     log('==================================================','separator');
-    log(' PHANTOMRECON Free v{VERSION}','module');
+    log(' PHANTOMRECON v{VERSION} Free Edition','module');
     log(' Iniciando ataque em: '+target,'ok');
     log(' Perfil: '+profile,'info');
     log('==================================================','separator');

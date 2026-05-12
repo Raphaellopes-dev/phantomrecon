@@ -61,7 +61,7 @@ def clean_target(raw):
 
 def run_full_scan(raw_target, scan_id, profile="aggressive"):
     target = clean_target(raw_target)
-    manager.add_log(scan_id, f"[ INICIANDO PHANTOMRECON Free v{VERSION} ]", "module")
+    manager.add_log(scan_id, f"[ INICIANDO PHANTOMRECON v{VERSION} Free Edition ]", "module")
     manager.add_log(scan_id, f"[>] Alvo: {target}", "info")
     manager.add_log(scan_id, f"[>] Perfil: {profile.upper()}", "info")
     manager.add_log(scan_id, f"[>] Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", "info")
@@ -260,7 +260,7 @@ def launch():
         server = HTTPServer(("0.0.0.0", port), PhantomHandler)
 
     url = f"http://{host}:{port}" if port != 80 else f"http://{host}/"
-    print(f"\n  PHANTOMRECON Free v{VERSION}")
+    print(f"\n  PHANTOMRECON v{VERSION} Free Edition")
     print(f"  {'='*50}")
     print(f"  Interface: {url}")
     if not has_host:

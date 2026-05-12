@@ -153,13 +153,13 @@ a{{color:#00ff88;text-decoration:none}}
 b{{color:#00ff88}}
 </style></head>
 <body><div class="container">
-<div class="header"><h1>PHANTOMRECON <span style="color:#4488ff;font-size:16px">Free</span></h1><div class="target">{htmlmod.escape(target)}</div><div class="date">{now} — v{VERSION}</div></div>
+<div class="header"><h1>PHANTOMRECON <span style="color:#4488ff;font-size:14px">Free Edition</span></h1><div class="target">{htmlmod.escape(target)}</div><div class="date">{now} — v{VERSION}</div></div>
 <div class="card"><div class="card-title">Alvo</div><div class="card-body"><p><b>Host:</b> {htmlmod.escape(target)}</p><p><b>IPs:</b> {htmlmod.escape(ips) or "N/A"}</p><p><b>Portas:</b> {len(ports)} | <b>Diretorios:</b> {len(dirs)} | <b>Vulns:</b> {len(vulns)}</p></div></div>
 {score_s}
 {aval_s}
 {('<div class="card"><div class="card-title">Portas Abertas ('+str(len(ports))+')</div><div class="card-body"><table><tr><th>Porta</th><th>Servico</th><th>Status</th></tr>'+port_r+'</table></div></div>') if ports else ''}
 {cve_s}{wp_s}{http_s}{ssl_s}{dns_s}{dir_s}{adm_s}{tech_s}{fp_s}{vuln_s}
-<div class="footer">PhantomRecon v{VERSION} — <a href="https://github.com/Raphaellopes-dev/phantomrecon" target="_blank">github.com/Raphaellopes-dev/phantomrecon</a></div>
+<div class="footer">PhantomRecon v{VERSION} Free Edition — <a href="https://github.com/Raphaellopes-dev/phantomrecon" target="_blank">github.com/Raphaellopes-dev/phantomrecon</a></div>
 </div></body></html>"""
 
     score_txt = ""
@@ -169,7 +169,7 @@ b{{color:#00ff88}}
             score_txt += "\n" + "\n".join(f"  - {d}" for d in security_score["deductions"])
         score_txt += "\n\n"
 
-    txt = f"PHANTOMRECON Free v{VERSION}\n{'='*50}\nAlvo: {target}\nData: {now}\n{'='*50}\n\nIPs: {ips or 'N/A'}\n\n{score_txt}"
+    txt = f"PHANTOMRECON v{VERSION} Free Edition\n{'='*50}\nAlvo: {target}\nData: {now}\n{'='*50}\n\nIPs: {ips or 'N/A'}\n\n{score_txt}"
     if ports:
         txt += "PORTAS ABERTAS:\n" + "-"*40 + "\n"
         for p, s, b in ports:

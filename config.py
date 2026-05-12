@@ -1,5 +1,5 @@
 VERSION = "5.0.0"
-EDITION = "Free"
+EDITION = "Free Edition"
 OUTPUT_DIR = "reports"
 
 COMMON_PORTS = {
